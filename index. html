@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="am">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Habesha Bingo Mini App</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #12181f; color: #fff; margin: 0; padding: 10px; }
+        
+        /* Top Navigation & Status */
+        .header { display: flex; justify-content: space-between; align-items: center; background: #1a232e; padding: 10px; border-radius: 10px; font-size: 13px; margin-bottom: 10px; }
+        .room-tag { background: #f39c12; color: #000; font-weight: bold; padding: 4px 8px; border-radius: 5px; }
+        .bal-box { background: #27ae60; padding: 6px 12px; border-radius: 6px; font-weight: bold; text-align: center; }
+        
+        /* Wallet Action Buttons */
+        .wallet-actions { display: flex; gap: 10px; margin-bottom: 10px; }
+        .btn-wallet { flex: 1; padding: 8px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
+        .btn-dep { background: #2980b9; color: white; }
+        .btn-with { background: #c0392b; color: white; }
+
+        /* Step 1: Card Selection Grid (1-135) */
+        .card-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; max-height: 400px; overflow-y: auto; background: #1e293b; padding: 8px; border-radius: 8px; }
+        .card-num { background: #334155; border-radius: 4px; padding: 10px 0; text-align: center; font-weight: bold; font-size: 11px; cursor: pointer; color: #f8fafc; }
+        .card-num.selected { background: #f1c40f; color: #000; }
+
+        /* Step 2: Game Screen */
+        .game-screen { display: none; }
+        .board-container { display: flex; gap: 10px; }
+        .bingo-board { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; width: 50%; }
+        .cell { background: #334155; text-align: center; padding: 6px 0; border-radius: 4px; font-size: 11px; }
+        .cell.drawn { background: #f1c40f; color: #000; font-weight: bold; }
+        
+        .play-area { width: 50%; text-align: center; background: #1e293b; padding: 10px; border-radius: 8px; }
+        .current-ball { width: 70px; height: 70px; background: #e67e22; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: bold; margin: 15px auto; border: 3px solid #f39c12; }
+        
+        .btn-bingo { background: #e74c3c; color: white; border: none; width: 100%; padding: 12px; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; }
+
+        /* Step 3: Winner Popup Modal */
+        .modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.85); justify-content: center; align-items: center; z-index: 999; }
+        .modal-content { background: #1e293b; border-radius: 12px; width: 90%; padding: 20px; text-align: center; border: 2px solid #f1c40f; }
+        .my-card-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 15px 0; }
+        .b-cell { background: #334155; padding: 8px 0; border-radius: 4px; font-weight: bold; }
+        .b-cell.marked { background: #27ae60; color: white; }
+    </style>
+</head>
+<body>
+
+    <!-- Header Stats -->
+    <div class="header">
+        <div class="room-tag">ROOM VIP 💰</div>
+        <div>DERASH<br><span id="derash-amount" style="color:#2ecc71; font-weight:bold;">0 ETB</span></div>
+        <div class="bal-box">BALANCE<br><span id="user-balance">100.00 ETB</span></div>
+    </div>
+
+    <!-- Deposit & Withdraw Quick Controls -->
+    <div class="wallet-actions">
+        <button class="btn-wallet btn-dep" onclick="depositMoney()">+ ብር አስገባ (Deposit)</button>
+        <button class="btn-wallet btn-with" onclick="withdrawMoney()">- ብር አውጣ (Withdraw)</button>
+    </div>
+
+    <!-- 1. Selection Screen -->
+    <div id="selection-screen">
+        <h3 style="text-align: center; margin: 5px 0;">ካርድ ይምረጡ (1 - 135)</h3>
+        <p style="text-align: center; font-size: 12px; color: #94a3b8;">የካርድ ዋጋ: 10 ETB</p>
+        <div class="card-grid" id="card-grid"></div>
+    </div>
+
+    <!-- 2. Main Game Screen -->
+    <div id="game-screen" class="game-screen">
+        <div class="board-container">
+            <div class="bingo-board" id="bingo-board"></div>
+            <div class="play-area">
+                <div style="font-size:12px;">የወጣው ቁጥር</div>
+                <div class="current-ball" id="current-ball">-</div>
+                <button class="btn-bingo" onclick="checkBingo()">🎉 BINGO!</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Win / Error Modal -->
+    <div class="modal" id="modal">
+        <div class="modal-content">
+            <h2 id="modal-title" style="color: #f1c40f; margin:0;">🏆 አሸናፊ!</h2>
+            <p id="modal-desc">ደራሽ: <b id="win-amount" style="color:#2ecc71;">0 ETB</b></p>
+            <div class="my-card-grid" id="modal-card-grid"></div>
+            <button class="btn-wallet btn-dep" style="width:100%; padding:12px;" onclick="resetGame()">ቀጥል (አዲስ ጨዋታ)</button>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+
+        let balance = 100.0;
+        let derash = 0.0;
+        let selectedCard = null;
+        let drawnNumbers = [];
+        let playerCardNumbers = [];
+        let gameInterval = null;
+
+        // Render Card Selection (1 to 135)
+        const grid = document.getElementById('card-grid');
+        for(let i = 1; i <= 135; i++) {
+            let el = document.createElement('div');
+            el.className = 'card-num';
+            el.innerText = i;
+            el.onclick = () => buyCard(i);
+            grid.appendChild(el);
+        }
+
+        function updateUI() {
+            document.getElementById('user-balance').innerText = balance.toFixed(2) + " ETB";
+            document.getElementById('derash-amount').innerText = derash.toFixed(2) + " ETB";
+        }
+
+        function depositMoney() {
+            let amt = prompt("ለማስገባት የሚፈልጉትን የብር መጠን ያስገቡ (ETB):", "50");
+            if(amt && !isNaN(amt) && Number(amt) > 0) {
+                balance += Number(amt);
+                updateUI();
+                alert("ብር በተሳካ ሁኔታ ገቢ ሆኗል!");
+            }
+        }
+
+        function withdrawMoney() {
+            let amt = prompt("ማውጣት የሚፈልጉትን የብር መጠን ያስገቡ (ETB):", "20");
+            if(amt && !isNaN(amt) && Number(amt) <= balance) {
+                balance -= Number(amt);
+                updateUI();
+                alert("የወጪ ጥያቄዎ ተልኳል!");
+            } else {
+                alert("በቂ ባላንስ የለዎትም!");
+            }
+        }
+
+        function buyCard(cardId) {
+            const cardPrice = 10.0;
+            if(balance < cardPrice) {
+                alert("እባክዎን አስቀድመው ብር ያስገቡ! ባላንስዎ በቂ አይደለም።");
+                return;
+            }
+            balance -= cardPrice;
+            derash += cardPrice; // Total pot
+            selectedCard = cardId;
+            updateUI();
+
+            document.getElementById('selection-screen').style.display = 'none';
+            document.getElementById('game-screen').style.display = 'block';
+
+            initGame();
+        }
+
+        function initGame() {
+            // Generate 75 Number Board
+            const board = document.getElementById('bingo-board');
+            board.innerHTML = '';
+            for(let i = 1; i <= 75; i++) {
+                let cell = document.createElement('div');
+                cell.className = 'cell';
+                cell.id = 'b-cell-' + i;
+                cell.innerText = i;
+                board.appendChild(cell);
+            }
+
+            // Generate Player 5x5 Card Matrix
+            playerCardNumbers = [];
+            while(playerCardNumbers.length < 25) {
+                let r = Math.floor(Math.random() * 75) + 1;
+                if(!playerCardNumbers.includes(r)) playerCardNumbers.push(r);
+            }
+
+            // Start Drawing Numbers
+            drawnNumbers = [];
+            gameInterval = setInterval(() => {
+                if(drawnNumbers.length >= 75) {
+                    clearInterval(gameInterval);
+                    return;
+                }
+                let nextNum;
+                do {
+                    nextNum = Math.floor(Math.random() * 75) + 1;
+                } while(drawnNumbers.includes(nextNum));
+
+                drawnNumbers.push(nextNum);
+                document.getElementById('current-ball').innerText = nextNum;
+                let c = document.getElementById('b-cell-' + nextNum);
+                if(c) c.classList.add('drawn');
+            }, 3000); // Draws a ball every 3 seconds
+        }
+
+        // BINGO Validation Logic (Prevents Fake Bingo)
+        function checkBingo() {
+            // Check if player has at least 5 drawn numbers matching their card
+            let matched = playerCardNumbers.filter(n => drawnNumbers.includes(n));
+            
+            if(matched.length >= 5) { // Valid Bingo Condition
+                clearInterval(gameInterval);
+                
+                // Calculate 90% Win and 10% Commission
+                let winnerShare = derash * 0.90;
+                let systemShare = derash * 0.10;
+                balance += winnerShare;
+                
+                showModal("🏆 BINGO! አሸንፈዋል!", `እንኳን ደስ አለዎት! 90% ደራሽ (${winnerShare.toFixed(2)} ETB) አሸንፈዋል። (10% Commission: ${systemShare.toFixed(2)} ETB)`);
+                updateUI();
+            } else { // Fake Bingo
+                alert("⚠️ ሐሰተኛ BINGO! እስካሁን የተሟላ መስመር አልሰሩም። ጨዋታው ይ ቀጥላል!");
+            }
+        }
+
+        function showModal(title, desc) {
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-desc').innerText = desc;
+            
+            const mGrid = document.getElementById('modal-card-grid');
+            mGrid.innerHTML = '';
+            playerCardNumbers.forEach(num => {
+                let div = document.createElement('div');
+                div.className = drawnNumbers.includes(num) ? 'b-cell marked' : 'b-cell';
+                div.innerText = num;
+                mGrid.appendChild(div);
+            });
+
+            document.getElementById('modal').style.display = 'flex';
+        }
+
+        function resetGame() {
+            document.getElementById('modal').style.display = 'none';
+            document.getElementById('game-screen').style.display = 'none';
+            document.getElementById('selection-screen').style.display = 'block';
+            derash = 0.0;
+            updateUI();
+        }
+
+        updateUI();
+    </script>
+</body>
+</html>
